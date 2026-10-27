@@ -1,6 +1,6 @@
 {
-  "name": "PrintKu Printing",
-  "short_name": "PrintKu",
+  "name": "DR Printing",
+  "short_name": "DR Printing",
   "description": "Website dan katalog PWA untuk usaha printing.",
   "start_url": "/",
   "display": "standalone",
@@ -8,7 +8,17 @@
   "theme_color": "#172554",
   "lang": "id-ID",
   "icons": [
-    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
   ]
 }

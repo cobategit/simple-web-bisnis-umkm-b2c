@@ -46,6 +46,8 @@ func main() {
 	}))
 	r.Static("/uploads", cfg.UploadDir)
 	r.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
+	r.GET("/robots.txt", app.RobotsTxt)
+	r.GET("/sitemap.xml", app.SitemapXML)
 
 	api := r.Group("/api/v1")
 	pub := api.Group("/public")
@@ -57,6 +59,7 @@ func main() {
 	pub.GET("/reviews", app.PublicReviews)
 	pub.POST("/reviews", app.SubmitReview)
 	pub.GET("/pages/:key", app.PublicPage)
+	pub.POST("/visit", app.RecordVisit)
 
 	auth := api.Group("/auth")
 	auth.POST("/login", app.Login)

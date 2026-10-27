@@ -7,6 +7,8 @@ export type SiteSettings = {
   email: string
   address: string
   instagram: string
+  maps_url?: string
+  maps_embed_url?: string
 }
 
 export type Product = {

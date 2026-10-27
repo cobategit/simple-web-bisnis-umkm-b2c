@@ -9,7 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@ckeditor/ckeditor5-react": "^11.2.0",
     "@tanstack/react-query": "^5.102.8",
+    "@types/dompurify": "^3.0.5",
+    "ckeditor5": "^48.5.1",
+    "dompurify": "^3.4.15",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.3"

@@ -1,4 +1,4 @@
-# PrintKu — React PWA + Go Gin CMS
+# Store — React PWA + Go Gin CMS
 
 Starter production-oriented untuk usaha printing dengan website publik + CMS dalam satu repository.
 
@@ -24,7 +24,7 @@ Starter production-oriented untuk usaha printing dengan website publik + CMS dal
 
 ## Fitur CMS
 
-- Dashboard ringkas
+- Dashboard statistik analitik pengunjung website (kunjungan hari ini, pengunjung unik, tren 7 hari, top halaman, breakdown perangkat & sumber traffic) serta ringkasan konten
 - Produk: create/update/delete, publish/draft, featured, upload gambar utama + multi-image gallery, atur urutan slide
 - Artikel: create/update/delete, draft/published
 - Review: approve, featured, delete
@@ -61,7 +61,7 @@ docker compose --profile tools run --rm seed
 Credential development default:
 
 ```text
-admin@printku.local
+admin@Store.local
 Admin123!change
 ```
 
@@ -101,7 +101,7 @@ Terminal lain untuk seed admin:
 ```bash
 cd backend
 export DATABASE_URL='postgres://printing:printing@localhost:5432/printing_cms?sslmode=disable'
-export SEED_ADMIN_EMAIL='admin@printku.local'
+export SEED_ADMIN_EMAIL='admin@Store.local'
 export SEED_ADMIN_PASSWORD='Admin123!change'
 go run ./cmd/seed
 ```
@@ -204,7 +204,7 @@ printing-pwa-cms/
 └── docker-compose.yml
 ```
 
-
 ## Detail Produk
+
 - Public route `/produk/:slug` dan pengaturan detail produk di CMS.
 - Jalankan migration `002_product_details.sql` melalui startup backend seperti biasa.

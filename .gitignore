@@ -6,3 +6,6 @@ backend/uploads/*
 !backend/uploads/.gitkeep
 .DS_Store
 *.log
+*.patch
+*.rej
+*.sh

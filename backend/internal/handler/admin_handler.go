@@ -12,6 +12,7 @@ import (
 	"printing-cms/backend/internal/security"
 
 	"github.com/gin-gonic/gin"
+	"github.com/microcosm-cc/bluemonday"
 )
 
 func (a *App) Dashboard(c *gin.Context) {
@@ -20,7 +21,18 @@ func (a *App) Dashboard(c *gin.Context) {
 	_ = a.DB.QueryRow(c, `SELECT count(*) FROM articles`).Scan(&articles)
 	_ = a.DB.QueryRow(c, `SELECT count(*) FROM reviews WHERE is_approved=false`).Scan(&reviews)
 	_ = a.DB.QueryRow(c, `SELECT count(*) FROM users WHERE is_active=true`).Scan(&users)
-	c.JSON(200, gin.H{"data": gin.H{"products": products, "articles": articles, "pending_reviews": reviews, "active_users": users}})
+
+	visitorStats := a.getVisitorStats(c)
+
+	c.JSON(200, gin.H{
+		"data": gin.H{
+			"products":        products,
+			"articles":        articles,
+			"pending_reviews": reviews,
+			"active_users":    users,
+			"visitor_stats":   visitorStats,
+		},
+	})
 }
 
 func (a *App) AdminProducts(c *gin.Context) {
@@ -159,8 +171,12 @@ func (a *App) CreateArticle(c *gin.Context) {
 	}
 	v, _ := c.Get(middleware.ClaimsKey)
 	claims := v.(*security.Claims)
+
+	policy := bluemonday.UGCPolicy()
+	policy.AllowAttrs("target").OnElements("a")
+	safeContent := policy.Sanitize(r.Content)
 	var id string
-	err := a.DB.QueryRow(c, `INSERT INTO articles(title,slug,excerpt,content,cover_image_url,status,published_at,author_id) VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $6='published' THEN NOW() ELSE NULL END,$7) RETURNING id::text`, r.Title, r.Slug, r.Excerpt, r.Content, r.CoverImageURL, r.Status, claims.Subject).Scan(&id)
+	err := a.DB.QueryRow(c, `INSERT INTO articles(title,slug,excerpt,content,cover_image_url,status,published_at,author_id) VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $7::varchar='published' THEN NOW() ELSE NULL END,$8) RETURNING id::text`, r.Title, r.Slug, r.Excerpt, safeContent, r.CoverImageURL, r.Status, r.Status, claims.Subject).Scan(&id)
 	if err != nil {
 		c.JSON(400, gin.H{"message": err.Error()})
 		return
@@ -173,7 +189,8 @@ func (a *App) UpdateArticle(c *gin.Context) {
 		c.JSON(400, gin.H{"message": "invalid payload"})
 		return
 	}
-	ct, err := a.DB.Exec(c, `UPDATE articles SET title=$1,slug=$2,excerpt=$3,content=$4,cover_image_url=$5,status=$6,published_at=CASE WHEN $6='published' THEN COALESCE(published_at,NOW()) ELSE NULL END,updated_at=NOW() WHERE id=$7`, r.Title, r.Slug, r.Excerpt, r.Content, r.CoverImageURL, r.Status, c.Param("id"))
+	safeContent := bluemonday.UGCPolicy().Sanitize(r.Content)
+	ct, err := a.DB.Exec(c, `UPDATE articles SET title=$1,slug=$2,excerpt=$3,content=$4,cover_image_url=$5,status=$6,published_at=CASE WHEN $7::varchar='published' THEN COALESCE(published_at,NOW()) ELSE NULL END,updated_at=NOW() WHERE id=$8`, r.Title, r.Slug, r.Excerpt, safeContent, r.CoverImageURL, r.Status, r.Status, c.Param("id"))
 	if err != nil || ct.RowsAffected() == 0 {
 		c.JSON(400, gin.H{"message": "update failed"})
 		return
@@ -250,7 +267,8 @@ func (a *App) UpdatePage(c *gin.Context) {
 		c.JSON(400, gin.H{"message": "invalid payload"})
 		return
 	}
-	_, err := a.DB.Exec(c, `INSERT INTO pages(key,title,content,updated_at) VALUES($1,$2,$3,NOW()) ON CONFLICT(key) DO UPDATE SET title=EXCLUDED.title,content=EXCLUDED.content,updated_at=NOW()`, c.Param("key"), r.Title, r.Content)
+	safeContent := bluemonday.UGCPolicy().Sanitize(r.Content)
+	_, err := a.DB.Exec(c, `INSERT INTO pages(key,title,content,updated_at) VALUES($1,$2,$3,NOW()) ON CONFLICT(key) DO UPDATE SET title=EXCLUDED.title,content=EXCLUDED.content,updated_at=NOW()`, c.Param("key"), r.Title, safeContent)
 	if err != nil {
 		c.JSON(400, gin.H{"message": "update failed"})
 		return
@@ -269,6 +287,8 @@ type settingsPayload struct {
 	Email        string `json:"email"`
 	Address      string `json:"address"`
 	Instagram    string `json:"instagram"`
+	MapsURL      string `json:"maps_url"`
+	MapsEmbedURL string `json:"maps_embed_url"`
 }
 
 func (a *App) UpdateSettings(c *gin.Context) {
@@ -277,7 +297,7 @@ func (a *App) UpdateSettings(c *gin.Context) {
 		c.JSON(400, gin.H{"message": "invalid payload"})
 		return
 	}
-	_, err := a.DB.Exec(c, `UPDATE site_settings SET business_name=$1,tagline=$2,hero_title=$3,hero_subtitle=$4,whatsapp=$5,email=$6,address=$7,instagram=$8,updated_at=NOW() WHERE id=1`, r.BusinessName, r.Tagline, r.HeroTitle, r.HeroSubtitle, r.WhatsApp, r.Email, r.Address, r.Instagram)
+	_, err := a.DB.Exec(c, `UPDATE site_settings SET business_name=$1,tagline=$2,hero_title=$3,hero_subtitle=$4,whatsapp=$5,email=$6,address=$7,instagram=$8,maps_url=$9,maps_embed_url=$10,updated_at=NOW() WHERE id=1`, r.BusinessName, r.Tagline, r.HeroTitle, r.HeroSubtitle, r.WhatsApp, r.Email, r.Address, r.Instagram, r.MapsURL, r.MapsEmbedURL)
 	if err != nil {
 		c.JSON(400, gin.H{"message": "update failed"})
 		return

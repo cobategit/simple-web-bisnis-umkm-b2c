@@ -166,10 +166,10 @@ func (a *App) identity(c *gin.Context, userID string) ([]string, []string, error
 func (a *App) setRefreshCookie(c *gin.Context, value string) {
 	maxAge := int(a.Cfg.RefreshTokenTTL.Seconds())
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("refresh_token", value, maxAge, "/api/v1/auth", "", a.Cfg.CookieSecure, true)
+	c.SetCookie("refresh_token", value, maxAge, "/", "", a.Cfg.CookieSecure, true)
 }
 
 func (a *App) clearRefreshCookie(c *gin.Context) {
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("refresh_token", "", -1, "/api/v1/auth", "", a.Cfg.CookieSecure, true)
+	c.SetCookie("refresh_token", "", -1, "/", "", a.Cfg.CookieSecure, true)
 }

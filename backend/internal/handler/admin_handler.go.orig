@@ -1,0 +1,406 @@
+package handler
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"printing-cms/backend/internal/middleware"
+	"printing-cms/backend/internal/security"
+
+	"github.com/gin-gonic/gin"
+	"github.com/microcosm-cc/bluemonday"
+)
+
+func (a *App) Dashboard(c *gin.Context) {
+	var products, articles, reviews, users int
+	_ = a.DB.QueryRow(c, `SELECT count(*) FROM products`).Scan(&products)
+	_ = a.DB.QueryRow(c, `SELECT count(*) FROM articles`).Scan(&articles)
+	_ = a.DB.QueryRow(c, `SELECT count(*) FROM reviews WHERE is_approved=false`).Scan(&reviews)
+	_ = a.DB.QueryRow(c, `SELECT count(*) FROM users WHERE is_active=true`).Scan(&users)
+	c.JSON(200, gin.H{"data": gin.H{"products": products, "articles": articles, "pending_reviews": reviews, "active_users": users}})
+}
+
+func (a *App) AdminProducts(c *gin.Context) {
+	rows, err := a.DB.Query(c, `SELECT id::text,name,slug,category,short_description,description,price_start,image_url,
+		min_order,production_time,materials::text,sizes::text,finishing::text,features::text,gallery_urls::text,order_note,
+		is_featured,is_published,sort_order,created_at FROM products ORDER BY sort_order,created_at DESC`)
+	if err != nil {
+		c.JSON(500, gin.H{"message": "failed"})
+		return
+	}
+	defer rows.Close()
+	items := []gin.H{}
+	for rows.Next() {
+		var id, name, slug, cat, shortDesc, desc, img, productionTime, materials, sizes, finishing, features, gallery, orderNote string
+		var price int64
+		var minOrder int
+		var feat, pub bool
+		var sort int
+		var created any
+		if rows.Scan(&id, &name, &slug, &cat, &shortDesc, &desc, &price, &img, &minOrder, &productionTime, &materials, &sizes, &finishing, &features, &gallery, &orderNote, &feat, &pub, &sort, &created) == nil {
+			items = append(items, gin.H{
+				"id": id, "name": name, "slug": slug, "category": cat, "short_description": shortDesc, "description": desc,
+				"price_start": price, "image_url": img, "min_order": minOrder, "production_time": productionTime,
+				"materials": decodeStringList(materials), "sizes": decodeStringList(sizes), "finishing": decodeStringList(finishing),
+				"features": decodeStringList(features), "gallery_urls": decodeStringList(gallery), "order_note": orderNote,
+				"is_featured": feat, "is_published": pub, "sort_order": sort, "created_at": created,
+			})
+		}
+	}
+	c.JSON(200, gin.H{"data": items})
+}
+
+type productPayload struct {
+	Name             string   `json:"name" binding:"required"`
+	Slug             string   `json:"slug" binding:"required"`
+	Category         string   `json:"category"`
+	ShortDescription string   `json:"short_description"`
+	Description      string   `json:"description"`
+	PriceStart       int64    `json:"price_start"`
+	ImageURL         string   `json:"image_url"`
+	MinOrder         int      `json:"min_order"`
+	ProductionTime   string   `json:"production_time"`
+	Materials        []string `json:"materials"`
+	Sizes            []string `json:"sizes"`
+	Finishing        []string `json:"finishing"`
+	Features         []string `json:"features"`
+	GalleryURLs      []string `json:"gallery_urls"`
+	OrderNote        string   `json:"order_note"`
+	IsFeatured       bool     `json:"is_featured"`
+	IsPublished      bool     `json:"is_published"`
+	SortOrder        int      `json:"sort_order"`
+}
+
+func (a *App) CreateProduct(c *gin.Context) {
+	var r productPayload
+	if c.ShouldBindJSON(&r) != nil {
+		c.JSON(400, gin.H{"message": "invalid payload"})
+		return
+	}
+	var id string
+	err := a.DB.QueryRow(c, `INSERT INTO products(
+		name,slug,category,short_description,description,price_start,image_url,min_order,production_time,
+		materials,sizes,finishing,features,gallery_urls,order_note,is_featured,is_published,sort_order
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14::jsonb,$15,$16,$17,$18) RETURNING id::text`,
+		r.Name, r.Slug, r.Category, r.ShortDescription, r.Description, r.PriceStart, r.ImageURL, r.MinOrder, r.ProductionTime,
+		encodeStringList(r.Materials), encodeStringList(r.Sizes), encodeStringList(r.Finishing), encodeStringList(r.Features), encodeStringList(r.GalleryURLs),
+		r.OrderNote, r.IsFeatured, r.IsPublished, r.SortOrder).Scan(&id)
+	if err != nil {
+		c.JSON(400, gin.H{"message": err.Error()})
+		return
+	}
+	c.JSON(201, gin.H{"id": id})
+}
+
+func (a *App) UpdateProduct(c *gin.Context) {
+	var r productPayload
+	if c.ShouldBindJSON(&r) != nil {
+		c.JSON(400, gin.H{"message": "invalid payload"})
+		return
+	}
+	ct, err := a.DB.Exec(c, `UPDATE products SET
+		name=$1,slug=$2,category=$3,short_description=$4,description=$5,price_start=$6,image_url=$7,min_order=$8,production_time=$9,
+		materials=$10::jsonb,sizes=$11::jsonb,finishing=$12::jsonb,features=$13::jsonb,gallery_urls=$14::jsonb,order_note=$15,
+		is_featured=$16,is_published=$17,sort_order=$18,updated_at=NOW() WHERE id=$19`,
+		r.Name, r.Slug, r.Category, r.ShortDescription, r.Description, r.PriceStart, r.ImageURL, r.MinOrder, r.ProductionTime,
+		encodeStringList(r.Materials), encodeStringList(r.Sizes), encodeStringList(r.Finishing), encodeStringList(r.Features), encodeStringList(r.GalleryURLs),
+		r.OrderNote, r.IsFeatured, r.IsPublished, r.SortOrder, c.Param("id"))
+	if err != nil || ct.RowsAffected() == 0 {
+		c.JSON(400, gin.H{"message": "update failed"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "updated"})
+}
+
+func (a *App) DeleteProduct(c *gin.Context) {
+	ct, err := a.DB.Exec(c, `DELETE FROM products WHERE id=$1`, c.Param("id"))
+	if err != nil || ct.RowsAffected() == 0 {
+		c.JSON(404, gin.H{"message": "not found"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "deleted"})
+}
+
+func (a *App) AdminArticles(c *gin.Context) {
+	rows, err := a.DB.Query(c, `SELECT id::text,title,slug,excerpt,content,cover_image_url,status,published_at,created_at FROM articles ORDER BY created_at DESC`)
+	if err != nil {
+		c.JSON(500, gin.H{"message": "failed"})
+		return
+	}
+	defer rows.Close()
+	items := []gin.H{}
+	for rows.Next() {
+		var id, title, slug, excerpt, content, cover, status string
+		var published, created any
+		if rows.Scan(&id, &title, &slug, &excerpt, &content, &cover, &status, &published, &created) == nil {
+			items = append(items, gin.H{"id": id, "title": title, "slug": slug, "excerpt": excerpt, "content": content, "cover_image_url": cover, "status": status, "published_at": published, "created_at": created})
+		}
+	}
+	c.JSON(200, gin.H{"data": items})
+}
+
+type articlePayload struct {
+	Title         string `json:"title" binding:"required"`
+	Slug          string `json:"slug" binding:"required"`
+	Excerpt       string `json:"excerpt"`
+	Content       string `json:"content"`
+	CoverImageURL string `json:"cover_image_url"`
+	Status        string `json:"status" binding:"required,oneof=draft published"`
+}
+
+func (a *App) CreateArticle(c *gin.Context) {
+	var r articlePayload
+	if c.ShouldBindJSON(&r) != nil {
+		c.JSON(400, gin.H{"message": "invalid payload"})
+		return
+	}
+	v, _ := c.Get(middleware.ClaimsKey)
+	claims := v.(*security.Claims)
+
+	safeContent := bluemonday.UGCPolicy().Sanitize(r.Content)
+	var id string
+	err := a.DB.QueryRow(c, `INSERT INTO articles(title,slug,excerpt,content,cover_image_url,status,published_at,author_id) VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $7::varchar='published' THEN NOW() ELSE NULL END,$8) RETURNING id::text`, r.Title, r.Slug, r.Excerpt, safeContent, r.CoverImageURL, r.Status, r.Status, claims.Subject).Scan(&id)
+	if err != nil {
+		c.JSON(400, gin.H{"message": err.Error()})
+		return
+	}
+	c.JSON(201, gin.H{"id": id})
+}
+func (a *App) UpdateArticle(c *gin.Context) {
+	var r articlePayload
+	if c.ShouldBindJSON(&r) != nil {
+		c.JSON(400, gin.H{"message": "invalid payload"})
+		return
+	}
+	safeContent := bluemonday.UGCPolicy().Sanitize(r.Content)
+	ct, err := a.DB.Exec(c, `UPDATE articles SET title=$1,slug=$2,excerpt=$3,content=$4,cover_image_url=$5,status=$6,published_at=CASE WHEN $7::varchar='published' THEN COALESCE(published_at,NOW()) ELSE NULL END,updated_at=NOW() WHERE id=$8`, r.Title, r.Slug, r.Excerpt, safeContent, r.CoverImageURL, r.Status, r.Status, c.Param("id"))
+	if err != nil || ct.RowsAffected() == 0 {
+		c.JSON(400, gin.H{"message": "update failed"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "updated"})
+}
+func (a *App) DeleteArticle(c *gin.Context) {
+	ct, err := a.DB.Exec(c, `DELETE FROM articles WHERE id=$1`, c.Param("id"))
+	if err != nil || ct.RowsAffected() == 0 {
+		c.JSON(404, gin.H{"message": "not found"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "deleted"})
+}
+
+func (a *App) AdminReviews(c *gin.Context) {
+	rows, err := a.DB.Query(c, `SELECT id::text,customer_name,rating,message,is_approved,is_featured,created_at FROM reviews ORDER BY created_at DESC`)
+	if err != nil {
+		c.JSON(500, gin.H{"message": "failed"})
+		return
+	}
+	defer rows.Close()
+	items := []gin.H{}
+	for rows.Next() {
+		var id, name, msg string
+		var rating int
+		var approved, featured bool
+		var created any
+		if rows.Scan(&id, &name, &rating, &msg, &approved, &featured, &created) == nil {
+			items = append(items, gin.H{"id": id, "customer_name": name, "rating": rating, "message": msg, "is_approved": approved, "is_featured": featured, "created_at": created})
+		}
+	}
+	c.JSON(200, gin.H{"data": items})
+}
+func (a *App) UpdateReview(c *gin.Context) {
+	var r struct {
+		IsApproved bool `json:"is_approved"`
+		IsFeatured bool `json:"is_featured"`
+	}
+	if c.ShouldBindJSON(&r) != nil {
+		c.JSON(400, gin.H{"message": "invalid payload"})
+		return
+	}
+	ct, err := a.DB.Exec(c, `UPDATE reviews SET is_approved=$1,is_featured=$2,updated_at=NOW() WHERE id=$3`, r.IsApproved, r.IsFeatured, c.Param("id"))
+	if err != nil || ct.RowsAffected() == 0 {
+		c.JSON(404, gin.H{"message": "not found"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "updated"})
+}
+func (a *App) DeleteReview(c *gin.Context) {
+	ct, err := a.DB.Exec(c, `DELETE FROM reviews WHERE id=$1`, c.Param("id"))
+	if err != nil || ct.RowsAffected() == 0 {
+		c.JSON(404, gin.H{"message": "not found"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "deleted"})
+}
+
+func (a *App) AdminPage(c *gin.Context) {
+	var key, title, content string
+	if a.DB.QueryRow(c, `SELECT key,title,content FROM pages WHERE key=$1`, c.Param("key")).Scan(&key, &title, &content) != nil {
+		c.JSON(404, gin.H{"message": "not found"})
+		return
+	}
+	c.JSON(200, gin.H{"data": gin.H{"key": key, "title": title, "content": content}})
+}
+func (a *App) UpdatePage(c *gin.Context) {
+	var r struct {
+		Title   string `json:"title" binding:"required"`
+		Content string `json:"content"`
+	}
+	if c.ShouldBindJSON(&r) != nil {
+		c.JSON(400, gin.H{"message": "invalid payload"})
+		return
+	}
+	safeContent := bluemonday.UGCPolicy().Sanitize(r.Content)
+	_, err := a.DB.Exec(c, `INSERT INTO pages(key,title,content,updated_at) VALUES($1,$2,$3,NOW()) ON CONFLICT(key) DO UPDATE SET title=EXCLUDED.title,content=EXCLUDED.content,updated_at=NOW()`, c.Param("key"), r.Title, safeContent)
+	if err != nil {
+		c.JSON(400, gin.H{"message": "update failed"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "updated"})
+}
+
+func (a *App) AdminSettings(c *gin.Context) { a.PublicSite(c) }
+
+type settingsPayload struct {
+	BusinessName string `json:"business_name" binding:"required"`
+	Tagline      string `json:"tagline"`
+	HeroTitle    string `json:"hero_title"`
+	HeroSubtitle string `json:"hero_subtitle"`
+	WhatsApp     string `json:"whatsapp"`
+	Email        string `json:"email"`
+	Address      string `json:"address"`
+	Instagram    string `json:"instagram"`
+	MapsURL      string `json:"maps_url"`
+	MapsEmbedURL string `json:"maps_embed_url"`
+}
+
+func (a *App) UpdateSettings(c *gin.Context) {
+	var r settingsPayload
+	if c.ShouldBindJSON(&r) != nil {
+		c.JSON(400, gin.H{"message": "invalid payload"})
+		return
+	}
+	_, err := a.DB.Exec(c, `UPDATE site_settings SET business_name=$1,tagline=$2,hero_title=$3,hero_subtitle=$4,whatsapp=$5,email=$6,address=$7,instagram=$8,maps_url=$9,maps_embed_url=$10,updated_at=NOW() WHERE id=1`, r.BusinessName, r.Tagline, r.HeroTitle, r.HeroSubtitle, r.WhatsApp, r.Email, r.Address, r.Instagram, r.MapsURL, r.MapsEmbedURL)
+	if err != nil {
+		c.JSON(400, gin.H{"message": "update failed"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "updated"})
+}
+
+func (a *App) AdminUsers(c *gin.Context) {
+	rows, err := a.DB.Query(c, `SELECT u.id::text,u.name,u.email,u.is_active,COALESCE(string_agg(r.code,','),'') FROM users u LEFT JOIN user_roles ur ON ur.user_id=u.id LEFT JOIN roles r ON r.id=ur.role_id GROUP BY u.id ORDER BY u.created_at DESC`)
+	if err != nil {
+		c.JSON(500, gin.H{"message": "failed"})
+		return
+	}
+	defer rows.Close()
+	items := []gin.H{}
+	for rows.Next() {
+		var id, name, email, roles string
+		var active bool
+		if rows.Scan(&id, &name, &email, &active, &roles) == nil {
+			items = append(items, gin.H{"id": id, "name": name, "email": email, "is_active": active, "roles": strings.Split(strings.Trim(roles, ","), ",")})
+		}
+	}
+	c.JSON(200, gin.H{"data": items})
+}
+func (a *App) CreateUser(c *gin.Context) {
+	var r struct {
+		Name     string `json:"name" binding:"required"`
+		Email    string `json:"email" binding:"required,email"`
+		Password string `json:"password" binding:"required,min=8"`
+		Role     string `json:"role" binding:"required,oneof=superadmin admin editor"`
+	}
+	if c.ShouldBindJSON(&r) != nil {
+		c.JSON(400, gin.H{"message": "invalid payload"})
+		return
+	}
+	hash, err := security.HashPassword(r.Password)
+	if err != nil {
+		c.JSON(500, gin.H{"message": "hash failed"})
+		return
+	}
+	tx, err := a.DB.Begin(c)
+	if err != nil {
+		c.JSON(500, gin.H{"message": "db failed"})
+		return
+	}
+	defer tx.Rollback(c)
+	var id string
+	if err = tx.QueryRow(c, `INSERT INTO users(name,email,password_hash) VALUES($1,$2,$3) RETURNING id::text`, r.Name, r.Email, hash).Scan(&id); err != nil {
+		c.JSON(400, gin.H{"message": err.Error()})
+		return
+	}
+	if _, err = tx.Exec(c, `INSERT INTO user_roles(user_id,role_id) SELECT $1,id FROM roles WHERE code=$2`, id, r.Role); err != nil {
+		c.JSON(400, gin.H{"message": "role failed"})
+		return
+	}
+	if err = tx.Commit(c); err != nil {
+		c.JSON(500, gin.H{"message": "commit failed"})
+		return
+	}
+	c.JSON(201, gin.H{"id": id})
+}
+func (a *App) UpdateUser(c *gin.Context) {
+	var r struct {
+		Name     string `json:"name" binding:"required"`
+		Role     string `json:"role" binding:"required,oneof=superadmin admin editor"`
+		IsActive bool   `json:"is_active"`
+	}
+	if c.ShouldBindJSON(&r) != nil {
+		c.JSON(400, gin.H{"message": "invalid payload"})
+		return
+	}
+	tx, err := a.DB.Begin(c)
+	if err != nil {
+		c.JSON(500, gin.H{"message": "db failed"})
+		return
+	}
+	defer tx.Rollback(c)
+	if _, err = tx.Exec(c, `UPDATE users SET name=$1,is_active=$2,updated_at=NOW() WHERE id=$3`, r.Name, r.IsActive, c.Param("id")); err != nil {
+		c.JSON(400, gin.H{"message": "update failed"})
+		return
+	}
+	_, _ = tx.Exec(c, `DELETE FROM user_roles WHERE user_id=$1`, c.Param("id"))
+	if _, err = tx.Exec(c, `INSERT INTO user_roles(user_id,role_id) SELECT $1,id FROM roles WHERE code=$2`, c.Param("id"), r.Role); err != nil {
+		c.JSON(400, gin.H{"message": "role failed"})
+		return
+	}
+	if err = tx.Commit(c); err != nil {
+		c.JSON(500, gin.H{"message": "commit failed"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "updated"})
+}
+
+func (a *App) Upload(c *gin.Context) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "file is required"})
+		return
+	}
+	if file.Size > 5*1024*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "max file size 5MB"})
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	allowed := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".webp": true}
+	if !allowed[ext] {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "only jpg, png, webp allowed"})
+		return
+	}
+	buf := make([]byte, 12)
+	_, _ = rand.Read(buf)
+	name := time.Now().Format("20060102") + "-" + hex.EncodeToString(buf) + ext
+	path := filepath.Join(a.Cfg.UploadDir, name)
+	if err := c.SaveUploadedFile(file, path); err != nil {
+		c.JSON(500, gin.H{"message": "upload failed"})
+		return
+	}
+	c.JSON(201, gin.H{"url": "/uploads/" + name})
+}
