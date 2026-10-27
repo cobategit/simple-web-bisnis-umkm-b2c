@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { PublicLoadingProvider } from '../components/public/PublicLoadingContext'
 import { PublicGlobalLoader } from '../components/public/PublicGlobalLoader'
+import { VisitorTracker } from '../components/public/VisitorTracker'
 
 const links = [
   ['/', 'Home'],
@@ -13,6 +14,7 @@ const links = [
 function PublicShell() {
   return (
     <>
+      <VisitorTracker />
       <PublicGlobalLoader />
       <header className='site-header'>
         <div className='container nav-wrap'>

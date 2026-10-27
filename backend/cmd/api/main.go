@@ -59,6 +59,7 @@ func main() {
 	pub.GET("/reviews", app.PublicReviews)
 	pub.POST("/reviews", app.SubmitReview)
 	pub.GET("/pages/:key", app.PublicPage)
+	pub.POST("/visit", app.RecordVisit)
 
 	auth := api.Group("/auth")
 	auth.POST("/login", app.Login)

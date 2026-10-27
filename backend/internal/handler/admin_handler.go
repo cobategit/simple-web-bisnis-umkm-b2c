@@ -21,7 +21,18 @@ func (a *App) Dashboard(c *gin.Context) {
 	_ = a.DB.QueryRow(c, `SELECT count(*) FROM articles`).Scan(&articles)
 	_ = a.DB.QueryRow(c, `SELECT count(*) FROM reviews WHERE is_approved=false`).Scan(&reviews)
 	_ = a.DB.QueryRow(c, `SELECT count(*) FROM users WHERE is_active=true`).Scan(&users)
-	c.JSON(200, gin.H{"data": gin.H{"products": products, "articles": articles, "pending_reviews": reviews, "active_users": users}})
+
+	visitorStats := a.getVisitorStats(c)
+
+	c.JSON(200, gin.H{
+		"data": gin.H{
+			"products":        products,
+			"articles":        articles,
+			"pending_reviews": reviews,
+			"active_users":    users,
+			"visitor_stats":   visitorStats,
+		},
+	})
 }
 
 func (a *App) AdminProducts(c *gin.Context) {
